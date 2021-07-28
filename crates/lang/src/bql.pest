@@ -7,7 +7,7 @@
  */
 cmd_list = { SOI ~ cmd+ ~ (";" ~ cmd)* ~ EOI }
 cmd = {
-    ^"explain"? ~ query ~ (";")* |
+    explain ~ (";")* |
     create_database ~ (";")* |
     create_table ~ (";")* |
     show_databases ~ (";")* |
@@ -61,6 +61,8 @@ if_exists = { ^"if" ~ ^"exists" }
 truncate_table = { ^"truncate" ~ ^"table" ~ if_exists? ~ qualified_table_name }
 
 optimize_table = { ^"optimize" ~ ^"table" ~ qualified_table_name }
+
+explain = {^"explain" ~ query }
 
 //--- dml ---
 

@@ -21,7 +21,13 @@ pub fn run(
     query_id: &str,
     qs: &mut QueryState,
 ) -> EngineResult<Vec<RecordBatch>> {
+    let is_explain = match p.as_rule() {
+        Rule::explain => true,
+        _ => false,
+    };
     let tctx = parse::parse_tables(p)?;
     log::debug!("projections - {:?}", tctx);
-    datafusions::run(ms, ps, current_db, raw_query, query_id, tctx, qs)
+    datafusions::run(
+        ms, ps, current_db, raw_query, is_explain, query_id, tctx, qs,
+    )
 }

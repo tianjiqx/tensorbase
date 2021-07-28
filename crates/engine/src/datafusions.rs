@@ -1,4 +1,4 @@
-use std::{lazy::SyncLazy, sync::Arc};
+use std::{lazy::SyncLazy, sync::Arc, sync::Mutex};
 
 use arrow::{
     array::{
@@ -13,7 +13,10 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use base::contract;
-use datafusion::{datasource::MemTable, error::Result, prelude::ExecutionContext};
+use datafusion::{
+    datasource::MemTable, error::Result, logical_plan::LogicalPlan,
+    prelude::ExecutionContext,
+};
 use lang::parse::{parse_where, TablesContext};
 use meta::{
     store::{
@@ -62,6 +65,7 @@ pub(crate) fn run(
     ps: &PartStore,
     current_db: &str,
     raw_query: &str,
+    is_explain: bool,
     _query_id: &str,
     tctx: TablesContext,
     qs: &mut QueryState,
@@ -170,7 +174,7 @@ pub(crate) fn run(
                 copass[0].len(),
                 tid,
             );
-            setup_tables(tab, schema, &mut ctx, &cis, &copass)?;
+            setup_tables(tab, schema, &mut ctx, &cis, &copass, is_explain)?;
             copasss.push(copass);
         }
     }
@@ -183,12 +187,44 @@ pub(crate) fn run(
     //FIXME copa prunning
 
     let df = ctx.sql(raw_query)?;
-    let res: Result<Vec<RecordBatch>> = TOKIO_RT.block_on(async move {
-        let result = df.collect().await?;
-        // arrow::util::pretty::print_batches(&result)?;
-        Ok(result)
-    });
-    Ok(res?)
+    if is_explain {
+        run_explain(&mut ctx, &df.to_logical_plan())
+    } else {
+        let res: Result<Vec<RecordBatch>> = TOKIO_RT.block_on(async move {
+            let result = df.collect().await?;
+            // arrow::util::pretty::print_batches(&result)?;
+            Ok(result)
+        });
+        Ok(res?)
+    }
+}
+// FIXME: workaround for explain output physical plan,
+// datafusion raw explain output logical plan
+fn run_explain(
+    ctx: &mut ExecutionContext,
+    plan: &LogicalPlan,
+) -> EngineResult<Vec<RecordBatch>> {
+    log::info!("QX exlain1");
+    let state = ctx.state.lock().unwrap().clone();
+    let ctx = ExecutionContext::from(Arc::new(Mutex::new(state)));
+    // if we use BallistaContext, Optimization has been done
+    let plan = ctx.optimize(plan)?;
+    let plan = ctx.create_physical_plan(&plan)?;
+    let displayable_plan = datafusion::physical_plan::displayable(plan.as_ref());
+    let mut builder = arrow::array::LargeStringBuilder::new(1);
+    builder.append_value(displayable_plan.indent().to_string().as_str())?;
+    let explain_data = builder.finish();
+    log::info!("QX exlain2 {:?}", explain_data);
+
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "Explain Physical Plan",
+        DataType::LargeUtf8,
+        false,
+    )]));
+    let record_batch = RecordBatch::try_new(schema, vec![Arc::new(explain_data)])?;
+    log::info!("QX exlain3");
+
+    Ok(vec![record_batch])
 }
 
 fn setup_tables(
@@ -197,6 +233,7 @@ fn setup_tables(
     ctx: &mut ExecutionContext,
     cis: &Vec<(Id, BqlType)>,
     copass: &Vec<Vec<CoPaInfo>>,
+    is_explain: bool,
 ) -> EngineResult<()> {
     contract!(copass.len() > 0, "copass should not be empty");
     contract!(
@@ -206,6 +243,26 @@ fn setup_tables(
     let nc = copass.len();
     let np = copass[0].len();
     let mut batches = Vec::with_capacity(np);
+    if !is_explain {
+        fill_batches(schema.clone(), cis, copass, np, nc, &mut batches).unwrap();
+    }
+    // println!("batches.len: {}", batches.len());
+    ctx.register_table(
+        tabname,
+        Arc::new(MemTable::try_new(schema.clone(), vec![batches])?),
+    )?;
+
+    Ok(())
+}
+
+fn fill_batches(
+    schema: Arc<Schema>,
+    cis: &Vec<(Id, BqlType)>,
+    copass: &Vec<Vec<CoPaInfo>>,
+    np: usize,
+    nc: usize,
+    batches: &mut Vec<RecordBatch>,
+) -> EngineResult<()> {
     for i in 0..np {
         let mut cols: Vec<ArrayRef> = Vec::with_capacity(nc);
         for j in 0..nc {
@@ -286,12 +343,6 @@ fn setup_tables(
         let batch = RecordBatch::try_new(schema.clone(), cols)?;
         batches.push(batch);
     }
-    // println!("batches.len: {}", batches.len());
-    ctx.register_table(
-        tabname,
-        Arc::new(MemTable::try_new(schema.clone(), vec![batches])?),
-    )?;
-
     Ok(())
 }
 

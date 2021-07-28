@@ -972,7 +972,7 @@ impl<'a> BaseMgmtSys<'a> {
                 println!("{:?}", p.as_str());
                 return self.command_insert_into(p, cctx);
             }
-            Rule::query => {
+            Rule::query | Rule::explain => {
                 let query_id = &cctx.query_id;
                 let timer = Instant::now();
                 let rt = self.command_query(p, &cctx.current_db, query_id);
