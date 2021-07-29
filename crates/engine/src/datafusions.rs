@@ -198,31 +198,42 @@ pub(crate) fn run(
         Ok(res?)
     }
 }
+
 // FIXME: workaround for explain output physical plan,
 // datafusion raw explain output logical plan
 fn run_explain(
     ctx: &mut ExecutionContext,
     plan: &LogicalPlan,
 ) -> EngineResult<Vec<RecordBatch>> {
-    log::info!("QX exlain1");
     let state = ctx.state.lock().unwrap().clone();
     let ctx = ExecutionContext::from(Arc::new(Mutex::new(state)));
     // if we use BallistaContext, Optimization has been done
     let plan = ctx.optimize(plan)?;
     let plan = ctx.create_physical_plan(&plan)?;
     let displayable_plan = datafusion::physical_plan::displayable(plan.as_ref());
-    let mut builder = arrow::array::LargeStringBuilder::new(1);
-    builder.append_value(displayable_plan.indent().to_string().as_str())?;
-    let explain_data = builder.finish();
-    log::info!("QX exlain2 {:?}", explain_data);
+    //let mut builder = arrow::array::LargeStringBuilder::new(1);
+    //builder.append_value(displayable_plan.indent().to_string().as_str())?;
+    //let explain_data = builder.finish();
+
+     let array = arrow::array::LargeStringArray::from(
+         vec![displayable_plan.indent().to_string().as_str()]);
+
+    //let buf = Buffer::from_bytes(displayable_plan.indent().to_string().as_str().bytes());
+
+
+    // let data = ArrayData::builder(DataType::LargeUtf8)
+    //     .len(1)
+    //     .add_buffer(buf_om)
+    //     .add_buffer(buf)
+    //     .build();
+    // let array = Arc::new(GenericStringArray::<i64>::from(data));
 
     let schema = Arc::new(Schema::new(vec![Field::new(
         "Explain Physical Plan",
         DataType::LargeUtf8,
         false,
     )]));
-    let record_batch = RecordBatch::try_new(schema, vec![Arc::new(explain_data)])?;
-    log::info!("QX exlain3");
+    let record_batch = RecordBatch::try_new(schema, vec![Arc::new(array)])?;
 
     Ok(vec![record_batch])
 }

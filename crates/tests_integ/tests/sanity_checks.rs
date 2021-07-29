@@ -5,6 +5,7 @@ use chrono::{Date, DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Ut
 use chrono_tz::Tz;
 use client::prelude::types::Decimal;
 use common::get_pool;
+use base::strings::PutIntoString;
 // macro_rules! get {
 //     ($row:ident, $idx: expr, $msg: expr) => {
 //         $row.value($idx)?.expect($msg)
@@ -1254,6 +1255,43 @@ async fn tests_integ_partition_prune() -> errors::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn tests_integ_explain() -> errors::Result<()> {
+    let pool = get_pool();
+    let mut conn = pool.connection().await?;
+
+    conn.execute("create database if not exists test_db")
+        .await?;
+    conn.execute("use test_db").await?;
+
+    conn.execute(format!("drop table if exists test1_tab"))
+        .await?;
+    conn.execute(format!(
+        "create table test1_tab(a UInt64, b UInt64) engine=BaseStorage partition by a"
+    ))
+        .await?;
+    conn.execute(format!("insert into test1_tab values(1,1),(2,2)"))
+        .await?;
+
+    unsafe {
+        let sql = "explain select a from test1_tab where b = 1";
+        let mut query_result = conn.query(sql).await?;
+
+        let res = "";
+        while let Some(block) = query_result.next().await? {
+            assert_eq!(block.column_count(), 1);
+            assert_eq!(block.row_count(), 1);
+            let col = &block.columns[0];
+            let mut explain = String::new();
+            col.data.get_at(0).put_into_string(&mut explain);
+
+            assert_eq!(explain, res);
+        }
+    }
+
+    conn.execute("drop database if exists test_db").await?;
+    Ok(())
+}
 // #[tokio::test]
 // async fn test_insert_large_block() -> errors::Result<()> {
 //     let pool = get_pool();
