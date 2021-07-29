@@ -8,6 +8,7 @@
 cmd_list = { SOI ~ cmd+ ~ (";" ~ cmd)* ~ EOI }
 cmd = {
     explain ~ (";")* |
+    query ~ (";")* |
     create_database ~ (";")* |
     create_table ~ (";")* |
     show_databases ~ (";")* |

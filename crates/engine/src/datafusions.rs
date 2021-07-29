@@ -31,6 +31,7 @@ use crate::{
     errs::{EngineError, EngineResult},
     types::QueryState,
 };
+use meta::types::IntoRef;
 
 static TOKIO_RT: SyncLazy<Runtime> =
     SyncLazy::new(|| runtime::Builder::new_multi_thread().build().unwrap());
@@ -211,29 +212,45 @@ fn run_explain(
     let plan = ctx.optimize(plan)?;
     let plan = ctx.create_physical_plan(&plan)?;
     let displayable_plan = datafusion::physical_plan::displayable(plan.as_ref());
-    //let mut builder = arrow::array::LargeStringBuilder::new(1);
-    //builder.append_value(displayable_plan.indent().to_string().as_str())?;
-    //let explain_data = builder.finish();
+    let mut builder = arrow::array::LargeStringBuilder::new(1);
+    builder.append_value(displayable_plan.indent().to_string().as_str())?;
+    let explain_data = builder.finish();
 
-     let array = arrow::array::LargeStringArray::from(
-         vec![displayable_plan.indent().to_string().as_str()]);
-
-    //let buf = Buffer::from_bytes(displayable_plan.indent().to_string().as_str().bytes());
+    let mut explain_str = displayable_plan.indent().to_string();
 
 
-    // let data = ArrayData::builder(DataType::LargeUtf8)
-    //     .len(1)
-    //     .add_buffer(buf_om)
-    //     .add_buffer(buf)
-    //     .build();
-    // let array = Arc::new(GenericStringArray::<i64>::from(data));
+    // let array = arrow::array::LargeStringArray::from(
+    //     vec![explain_str]);
+
+    let mut buf = Vec::with_capacity(explain_str.len());
+    base::codec::encode_ascii_bytes_vec_short(explain_str.as_bytes(), &mut buf)
+        .unwrap_or_default();
+
+    let dummy = Arc::new(FFI_ArrowArray::empty());
+    // let buf = unsafe {
+    //     let ptr = std::ptr::NonNull::new(explain_str.as_mut_ptr())
+    //         .ok_or(EngineError::UnwrapOptionError)?;
+    //     Buffer::from_unowned(ptr, explain_str.len(), dummy)
+    // };
+    let buf = unsafe {
+        let ptr = std::ptr::NonNull::new(explain_str.as_mut_ptr())
+            .ok_or(EngineError::UnwrapOptionError)?;
+        Buffer::from_unowned(ptr, explain_str.len(), dummy)
+    };
+
+    let data = ArrayData::builder(DataType::LargeUtf8)
+        .len(2)
+        .add_buffer(Buffer::from_slice_ref(&[1]))
+        .add_buffer(buf)
+        .build();
+    let array = Arc::new(GenericStringArray::<i64>::from(data));
 
     let schema = Arc::new(Schema::new(vec![Field::new(
         "Explain Physical Plan",
         DataType::LargeUtf8,
         false,
     )]));
-    let record_batch = RecordBatch::try_new(schema, vec![Arc::new(array)])?;
+    let record_batch = RecordBatch::try_new(schema, vec![array])?;
 
     Ok(vec![record_batch])
 }
